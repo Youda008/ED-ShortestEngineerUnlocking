@@ -1,0 +1,39 @@
+>	5	Thrusters
+>	5	Power Plant
+>	5	Power Distributor
+>	5	Frame Shift Drive
+	5	Life Support
+>	5	Armour
+	5	Hull Reinforcement Package
+>	5	Shield Generator
+>	3	Shield Cell Bank
+>	5	Shield Booster
+	5	Sensors
+	5	Detailed Surface Scanner
+	5	Frame Shift Wake Scanner
+	5	Kill Warrant Scanner
+	5	Manifest Scanner
+	5	Collector Limpet Controller
+	5	Fuel Transfer Limpet Controller
+	5	Hatch Breaker Limpet Controller
+	5	Prospector Limpet Controller
+>	5	Fuel Scoop
+	5	Refinery
+	5	Frame Shift Drive Interdictor
+>	5	Auto Field-Maintenance Unit
+>	5	Point Defence
+	5	Electronic Countermeasure
+>	5	Chaff Launcher
+>	5	Heat Sink Launcher
+>	5	Beam Laser
+	5	Burst Laser
+>	5	Pulse Laser
+	5	Multi-cannon
+	5	Cannon
+	5	Fragment Cannon
+	5	Rail Gun
+	5	Plasma Accelerator
+	5	Missile Rack
+	5	Seeker Missile Rack
+	5	Torpedo Pylon
+	5	Mine Launcher
