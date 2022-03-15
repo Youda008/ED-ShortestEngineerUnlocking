@@ -29,6 +29,8 @@
 	using std::string;
 #include <vector>
 	using std::vector;
+#include <set>
+	using std::set;
 #include <unordered_set>
 	using std::unordered_set;
 	using std::unordered_multiset;
@@ -180,6 +182,13 @@ class CountedIndexSet
 		Index currentIdx;
 
 	 public:
+
+		// required for std::lexicographical_compare to work
+		using difference_type = std::ptrdiff_t;
+		using value_type = Index;
+		using pointer = value_type *;
+		using reference = value_type &;
+		using iterator_category = std::forward_iterator_tag;
 
 		Iterator( const int * array, Index startingIdx ) : array( array )
 		{
@@ -361,26 +370,43 @@ struct Solution
 	EngineerModMultimap relatedModifications;
 };
 
+/// comparator for the set below, prevents duplicating solutions with the same set of engineers
+bool operator<( const Solution & solution1, const Solution & solution2 )
+{
+	return std::lexicographical_compare(
+		solution1.requiredEngineers.begin(), solution1.requiredEngineers.end(),
+		solution2.requiredEngineers.begin(), solution2.requiredEngineers.end()
+	);
+}
+
 /// intermediate results and support data
 struct AlgorithmContext
 {
 	/// gradually constructed during the recursive combination generation
 	Solution currentSolution;
 
-	/// the best solution found so far
-	Solution bestSolution;
+	/// list of solutions of the best size found so far
+	set< Solution > bestSolutions;
 
 	/// whether at least one valid solution was found
 	/** We need this for verification that the user didn't enter requirements that are impossible to satisfy. */
 	bool foundSolution;
 };
 
-/// This compares to sets of engineers required to be unlocked and decides which one is faster to unlock.
-bool isBetter( const Solution & solution1, const Solution & solution2 )
+/// This compares 2 sets of engineers required to be unlocked and decides which one is faster to unlock.
+int compare( const Solution & solution1, const Solution & solution2 )
 {
 	// For simplicity we just compare the number of engineers in the set,
 	// but we could account for the difficulty of unlocking each engineer.
-	return solution1.requiredEngineers.size() < solution2.requiredEngineers.size();
+	return ushort( solution2.requiredEngineers.size() ) - ushort( solution1.requiredEngineers.size() );
+}
+bool isBetter( const Solution & solution1, const Solution & solution2 )
+{
+	return compare( solution1, solution2 ) > 0;
+}
+bool isBetterOrEqual( const Solution & solution1, const Solution & solution2 )
+{
+	return compare( solution1, solution2 ) >= 0;
 }
 
 /// Adds all engineers that are required to be unlocked to unlock this engineer, including this engineer himself.
@@ -448,7 +474,7 @@ void tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext * cur
 		if (currentModCtx < lastModCtx)
 		{
 			// optimization: If it's not better now, it will not be better deeper in the recursion, abort here.
-			if (isBetter( ctx.currentSolution, ctx.bestSolution ))
+			if (ctx.bestSolutions.empty() || isBetterOrEqual( ctx.currentSolution, *ctx.bestSolutions.begin() ))
 			{
 				// If the current mod is required to be pinned, remove the current engineer from
 				// all the sets of engineers offering another mod that is required to be pinned,
@@ -467,9 +493,22 @@ void tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext * cur
 		else
 		{
 			// whole combination has been generated, evaluate it
-			if (isBetter( ctx.currentSolution, ctx.bestSolution ))
+			if (ctx.bestSolutions.empty())
 			{
-				ctx.bestSolution = ctx.currentSolution;
+				ctx.bestSolutions.insert( ctx.currentSolution );
+			}
+			else
+			{
+				int comparison = compare( ctx.currentSolution, *ctx.bestSolutions.begin() );
+				if (comparison == 0)  // this solution is equally good as the previous one, add it
+				{
+					ctx.bestSolutions.insert( ctx.currentSolution );
+				}
+				else if (comparison > 0)  // this solution is better than all the added ones, replace them
+				{
+					ctx.bestSolutions.clear();
+					ctx.bestSolutions.insert( ctx.currentSolution );
+				}
 			}
 			ctx.foundSolution = true;
 		}
@@ -481,21 +520,16 @@ void tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext * cur
 }
 
 /// only a wrapper around the recursive function, performing required initialization
-Solution findBestEngineerCombination( vector< DesiredModContext > & desiredModContexts )
+set< Solution > findBestEngineerCombination( vector< DesiredModContext > & desiredModContexts )
 {
 	AlgorithmContext ctx;
 
 	ctx.foundSolution = false;
 
-	// Initialize the best set to the worst one (with all the engineers)
-	// so that it's not evaluated as better than anything else, empty set would always be better than anything else.
-	for (EngineerIdx engineerIdx = firstEngineerIdx; engineerIdx <= lastEngineerIdx; engineerIdx = inc( engineerIdx ))
-		ctx.bestSolution.requiredEngineers.insert( engineerIdx );
-
 	tryAllEngineerCombinations( ctx, &desiredModContexts.front(), &desiredModContexts.back() );
 
 	if (ctx.foundSolution)
-		return ctx.bestSolution;
+		return ctx.bestSolutions;
 	else
 		return {};  // because empty set can never be a valid result, we can use this to indicate failure
 }
@@ -552,25 +586,31 @@ EngineerList orderTopologically( const EngineerSet & engineerSet )
 	return orderedEngineers;
 }
 
-struct UnlockingPath
+/// simmilar to Solution, but the collection of engineers is topologically sorted
+struct OrderedSolution
 {
-	/// if this is .valid(), an engineer offering this modification couldn't be found
-	Modification missingMod;
-
 	/// engineers that need to be unlocked, in the correct unlocking order
 	EngineerList orderedEngineers;
 
 	/// which engineer was added for which modification
 	/** Key is the engineer, value is the list of modifications for which he was choses by the algorithm. */
 	EngineerModMultimap relatedModifications;
+};
 
-	bool valid() const { return !missingMod.valid() && !orderedEngineers.empty(); }
+struct Result
+{
+	/// if this is .valid(), an engineer offering this modification couldn't be found
+	Modification missingMod;
+
+	vector< OrderedSolution > possibleUnlockingPaths;
+
+	bool valid() const { return !missingMod.valid() && !possibleUnlockingPaths.empty(); }
 };
 
 /// Finds the shortest path through engineer unlocking that gets you access to desired modifications.
-UnlockingPath findShortestEngineerUnlockingPath( const vector< DesiredMod > & desiredModifications )
+Result findShortestEngineerUnlockingPath( const vector< DesiredMod > & desiredModifications )
 {
-	UnlockingPath unlockingPath;
+	Result result;
 
 	// find engineers that offer each desired mod
 	vector< DesiredModContext > desiredModContexts;
@@ -582,24 +622,27 @@ UnlockingPath findShortestEngineerUnlockingPath( const vector< DesiredMod > & de
 		desiredModContexts.back().engineers = findEngineersOfferingModification( desiredMod );
 		if (desiredModContexts.back().engineers.empty())
 		{
-			unlockingPath.missingMod = desiredMod;
-			return unlockingPath;
+			result.missingMod = desiredMod;
+			return result;
 		}
 	}
 
 	// generate every combination of the engineers, add all their requirements, and choose the best combination
-	auto solution = findBestEngineerCombination( desiredModContexts );
-	if (solution.requiredEngineers.empty())
+	auto solutions = findBestEngineerCombination( desiredModContexts );
+	if (solutions.empty())
 	{
-		return unlockingPath;
+		return result;  // also empty
 	}
 
 	// order the engineers according to their unlocking requirements
-	unlockingPath.orderedEngineers = orderTopologically( solution.requiredEngineers );
+	for (const auto & solution : solutions)
+	{
+		result.possibleUnlockingPaths.emplace_back();
+		result.possibleUnlockingPaths.back().orderedEngineers = orderTopologically( solution.requiredEngineers);
+		result.possibleUnlockingPaths.back().relatedModifications = solution.relatedModifications;
+	}
 
-	unlockingPath.relatedModifications = solution.relatedModifications;
-
-	return unlockingPath;
+	return result;
 }
 
 
@@ -776,7 +819,7 @@ void printList( const List & list )
 	}
 }
 
-void printEngineerUnlockingPath( const UnlockingPath & unlockingPath, uint indentation = 0 )
+void printEngineerUnlockingPath( const OrderedSolution & unlockingPath, uint indentation = 0 )
 {
 	for (EngineerIdx engineerIdx : unlockingPath.orderedEngineers)
 	{
@@ -802,7 +845,7 @@ void printModifications( const vector< Modification > & modifications, uint inde
 }
 
 /// For each engineer in the unlocking path, prints which of his modifications you should pin.
-void printDetailedUnlockingPath( const vector< DesiredMod > & desiredMods, const UnlockingPath & unlockingPath )
+void printDetailedUnlockingPath( const vector< DesiredMod > & desiredMods, const OrderedSolution & unlockingPath )
 {
 	for (EngineerIdx engineerIdx : unlockingPath.orderedEngineers)
 	{
@@ -924,15 +967,15 @@ int main( int argc, char * argv [] )
 		return 3;
 	}
 
-	auto unlockingPath = findShortestEngineerUnlockingPath( desiredMods );
+	auto result = findShortestEngineerUnlockingPath( desiredMods );
 
-	if (unlockingPath.missingMod.valid())
+	if (result.missingMod.valid())
 	{
-		cerr << "There is no engineer that offers modification: " << unlockingPath.missingMod << endl;
+		cerr << "There is no engineer that offers modification: " << result.missingMod << endl;
 		if (interactive) waitForEnter();
 		return 3;
 	}
-	else if (!unlockingPath.valid())
+	else if (result.possibleUnlockingPaths.empty())
 	{
 		cerr << "The input requirements couldn't be satisfied,\n"
 		     << "there is not enough engineers to cover all your desired modifications." << endl;
@@ -940,24 +983,37 @@ int main( int argc, char * argv [] )
 		return 4;
 	}
 
-	if (args.detailedOutput)
+	cout << "There are " << result.possibleUnlockingPaths.size() << " possible unlocking paths." << endl;
+	for (uint idx = 0; idx < result.possibleUnlockingPaths.size(); ++idx)
 	{
-		cout << "Unlocking order (" << unlockingPath.orderedEngineers.size() << " engineers):\n\n";
-		printDetailedUnlockingPath( desiredMods, unlockingPath );
-		cout << endl;
-	}
-	else
-	{
-		cout << "Unlocking order (" << unlockingPath.orderedEngineers.size() << " engineers):\n";
-		printEngineerUnlockingPath( unlockingPath, 1 );
-		cout << endl;
+		const auto & possiblePath = result.possibleUnlockingPaths[ idx ];
+		if (args.detailedOutput)
+		{
+			cout << '\n' << '\n';
 
-		auto additionalMods = getAdditionalModifications( desiredMods, unlockingPath.orderedEngineers );
-		cout << "Additionally you will get access to:\n";
-		printModifications( additionalMods, 1 );
-		cout << endl;
-	}
+			cout << "Unlocking path " << idx + 1 << " (" << possiblePath.orderedEngineers.size() << " engineers):\n\n";
+			printDetailedUnlockingPath( desiredMods, possiblePath );
+			cout << endl;
+		}
+		else
+		{
+			cout << '\n' << '\n';
 
-	if (interactive) waitForEnter();
+			cout << "Unlocking path " << idx + 1 << " (" << possiblePath.orderedEngineers.size() << " engineers):\n";
+			printEngineerUnlockingPath( possiblePath, 1 );
+			cout << endl;
+
+			auto additionalMods = getAdditionalModifications( desiredMods, possiblePath.orderedEngineers );
+			cout << "Additionally you will get access to:\n";
+			printModifications( additionalMods, 1 );
+			cout << endl;
+		}
+
+		if (idx < result.possibleUnlockingPaths.size() - 1)
+		{
+			cout << "\nPress enter to show next possible path." << endl;
+			waitForEnter();
+		}
+	}
 	return 0;
 }
