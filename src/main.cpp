@@ -468,19 +468,23 @@ uint64_t tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext *
 
 		if (currentModCtx < lastModCtx)
 		{
-			// If the current mod is required to be pinned, remove the current engineer from
-			// all the sets of engineers offering another mod that is required to be pinned,
-			// because pinning more modifications from this engineer will not be possible.
-			if (currentModCtx->mod.pinRequired)
-				removeEngineerFromAllSetsOfPinnedMods( engineerIdx, currentModCtx + 1, lastModCtx );
+			// optimization: If it's not better now, it will not be better deeper in the recursion, abort here.
+			if (isBetter( ctx.currentSolution, ctx.bestSolution ))
+			{
+				// If the current mod is required to be pinned, remove the current engineer from
+				// all the sets of engineers offering another mod that is required to be pinned,
+				// because pinning more modifications from this engineer will not be possible.
+				if (currentModCtx->mod.pinRequired)
+					removeEngineerFromAllSetsOfPinnedMods( engineerIdx, currentModCtx + 1, lastModCtx );
 
-			// continue with generating the rest of the combination
-			combinationsDoneLocally += tryAllEngineerCombinations( ctx, currentModCtx + 1, lastModCtx );
-			engineersTried += 1;  // needed to track progress and display how much is remaining
+				// continue with generating the rest of the combination
+				combinationsDoneLocally += tryAllEngineerCombinations( ctx, currentModCtx + 1, lastModCtx );
+				engineersTried += 1;  // needed to track progress and display how much is remaining
 
-			// restore the previous state of the sets of engineers offering a mod that is required to be pinned
-			if (currentModCtx->mod.pinRequired)
-				addEngineerToAllSetsOfPinnedMods( engineerIdx, currentModCtx + 1, lastModCtx );
+				// restore the previous state of the sets of engineers offering a mod that is required to be pinned
+				if (currentModCtx->mod.pinRequired)
+					addEngineerToAllSetsOfPinnedMods( engineerIdx, currentModCtx + 1, lastModCtx );
+			}
 		}
 		else
 		{
