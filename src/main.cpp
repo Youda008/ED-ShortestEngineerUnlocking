@@ -111,46 +111,92 @@ class indent
 
 
 //----------------------------------------------------------------------------------------------------------------------
-/// Unordered set that remembers how many times a value was inserted and erasing it erases just one occurence.
+/// Fast statically allocated array list
+template< typename Value, size_t maxSize >
+class FixedList
+{
+	size_t count = 0;
+	Value array [maxSize];
+
+ public:
+
+	      Value & operator[]( size_t idx )       { return array[ idx ]; }
+	const Value & operator[]( size_t idx ) const { return array[ idx ]; }
+
+	      Value * begin()                        { return array; }
+	      Value * end()                          { return array + count; }
+	const Value * begin() const                  { return array; }
+	const Value * end()   const                  { return array + count; }
+
+	size_t size() const                          { return count; }
+	bool empty() const                           { return count == 0; }
+
+	void push_back( const Value & val )
+	{
+		array[ count ] = val;
+		count += 1;
+	}
+	Value * erase( Value * val )
+	{
+		for (Value * current = val; current + 1 < end(); ++current)
+		{
+			*current = *(current + 1);
+		}
+		count -= 1;
+		return val;
+	}
+	void remove( const Value & val )
+	{
+		auto newEnd = std::remove( begin(), end(), val );
+		count -= end() - newEnd;
+	}
+};
+
+
+//----------------------------------------------------------------------------------------------------------------------
+/// Fast unordered set for index-like elements, using plain array for storage,
+/// that remembers how many times a value was inserted and erasing it erases just one occurence.
 //
 //  A std::unordered_multiset isn't enough because one call to erase() erases all occurences
 //  and iteration visits all multiplicated entries as many times as they are there.
 //
 //  We need the iteration to behave just like it was a standard set and erase() to just decrease the count,
 //  in order to be able to restore the set to its previous state, before a batch of items was inserted.
-template< typename Value >
-class CountedSet
+//
+//  We could just use simple C array or std::array directly and don't bother with this class,
+//  but this way we can at least give it some prettier interface.
+template< typename Index, Index endIndex >
+class CountedIndexSet
 {
  protected:
 
 	// The count has signed so that it remembers when we try to delete an element that wasn't there,
 	// and cancels out with trying to re-add it later.
-	unordered_map< Value, int > valueCounts;
+	int array [ size_t(endIndex) ] {};  // initialize all indexes to 0
 
 	class Iterator
 	{
-		using WrapperIter = typename decltype( valueCounts )::const_iterator;
-		WrapperIter wrapperIter;
-		WrapperIter wrappedEnd;
+		const int * array;
+		Index currentIdx;
 
 	 public:
 
-		Iterator( const WrapperIter & origIter, const WrapperIter & origEnd )
-			: wrapperIter( origIter ), wrappedEnd( origEnd )
+		Iterator( const int * array, Index startingIdx ) : array( array )
 		{
-			// move the iterator to the nearest value with count > 0
-			while (wrapperIter != wrappedEnd && wrapperIter->second <= 0)
-				++wrapperIter;
+			// move the current index to the nearest index that is present
+			currentIdx = startingIdx;
+			while (currentIdx < endIndex && array[ size_t(currentIdx) ] <= 0)
+				currentIdx = inc( currentIdx );
 		}
 
-		auto operator*() const { return wrapperIter->first; }
-		auto operator->() const { return &wrapperIter->first; }
+		auto operator*() const { return currentIdx; }
+		auto operator->() const { return &currentIdx; }
 
 		Iterator & operator++()
 		{
 			do
-				++wrapperIter;
-			while (wrapperIter != wrappedEnd && wrapperIter->second <= 0);
+				currentIdx = inc( currentIdx );
+			while (currentIdx < endIndex && array[ size_t(currentIdx) ] <= 0);
 			return *this;
 		}
 		Iterator operator++(int)
@@ -162,56 +208,42 @@ class CountedSet
 
 		friend bool operator==( const Iterator & a, const Iterator & b )
 		{
-			return a.wrapperIter == b.wrapperIter;
+			return a.array + a.currentIdx == b.array + b.currentIdx;
 		}
 		friend bool operator!=( const Iterator & a, const Iterator & b )
 		{
-			return a.wrapperIter != b.wrapperIter;
+			return a.array + a.currentIdx != b.array + b.currentIdx;
 		}
 	};
 
  public:
 
-	CountedSet() = default;
-	CountedSet( const CountedSet< Value > & other ) = default;
-	CountedSet< Value > & operator=( const CountedSet< Value > & other ) = default;
+	CountedIndexSet() = default;
+	CountedIndexSet( const CountedIndexSet< Index, endIndex > & other ) = default;
+	CountedIndexSet< Index, endIndex > & operator=( const CountedIndexSet< Index, endIndex > & other ) = default;
 
-	void insert( const Value & val )
+	void insert( Index idx )
 	{
-		auto iter = valueCounts.find( val );
-		if (iter == valueCounts.end())
-		{
-			iter = valueCounts.insert({ val, 0 }).first;
-		}
-		iter->second += 1;
+		array[ size_t(idx) ] += 1;
 	}
 
-	void erase( const Value & val )
+	void erase( Index idx )
 	{
-		auto iter = valueCounts.find( val );
-		if (iter == valueCounts.end())
-		{
-			iter = valueCounts.insert({ val, 0 }).first;
-		}
-		iter->second -= 1;
-		if (iter->second == 0)
-		{
-			valueCounts.erase( iter );
-		}
+		array[ size_t(idx) ] -= 1;
 	}
 
-	bool contains( const Value & val ) const
+	bool contains( Index idx ) const
 	{
-		auto iter = valueCounts.find( val );
-		if (iter != valueCounts.end())
-			return iter->second > 0;
-		else
-			return false;
+		return array[ size_t(idx) ] > 0;
 	}
 
 	size_t size() const
 	{
-		return valueCounts.size();
+		// This is not called very often and the size of the array is in decades only, so we can afford to be linear.
+		size_t size = 0;
+		for (size_t idx = 0; idx < size_t(endIndex); ++idx)
+			size += size_t( array[ idx ] > 0 );  // we're using bool as int, true is guaranteed to convert to 1
+		return size;
 	}
 
 	bool empty() const
@@ -220,41 +252,51 @@ class CountedSet
 	}
 
 	using const_iterator = Iterator;
-	const_iterator begin() const { return const_iterator( valueCounts.begin(), valueCounts.end() ); }
-	const_iterator end() const   { return const_iterator( valueCounts.end(), valueCounts.end() ); }
+	const_iterator begin() const { return const_iterator( array, Index(0) ); }
+	const_iterator end() const   { return const_iterator( array, endIndex ); }
 };
 
 
 //----------------------------------------------------------------------------------------------------------------------
-/// Custom multimap that can erase one specific key/value pair.
-template< typename Key, typename Value >
-class Multimap
+/// Fast unordered map for index-like elements, using plain array for storage.
+//
+//  We could just use simple C array or std::array directly and don't bother with this class,
+//  but this way we can at least give it some prettier interface.
+template< typename Index, Index endIndex, typename Value >
+class IndexMap
 {
-	using Values = vector< Value >;
-	unordered_map< Key, Values > data;
-	Values noValues {};
+	Value array [ size_t(endIndex) ] {};  // default-initialize everything
 
  public:
 
-	      Values & operator[]( const Key & key )       { return data[ key ]; }
-	const Values & operator[]( const Key & key ) const
+	      Value & operator[]( Index idx )       { return array[ size_t(idx) ]; }
+	const Value & operator[]( Index idx ) const { return array[ size_t(idx) ]; }
+};
+
+
+//----------------------------------------------------------------------------------------------------------------------
+/// Fast unordered multi-map for index-like elements, using plain array for storage.
+//
+//  We could just use simple C array or std::array directly and don't bother with this class,
+//  but this way we can at least give it some prettier interface.
+template< typename Index, Index endIndex, typename Value, size_t maxValues >
+class IndexMultimap
+{
+	using Values = FixedList< Value, maxValues >;
+	Values array [ size_t(endIndex) ] {};  // initialize counts of all indexes to 0
+
+ public:
+
+	const Values & operator[]( Index idx ) const { return array[ size_t(idx) ]; }
+
+	void insert( Index idx, const Value & val )
 	{
-		auto iter = data.find( key );
-		if (iter != data.end())
-			return iter->second;
-		else
-			return noValues;
+		array[ size_t(idx) ].push_back( val );
 	}
 
-	void insert( const Key & key, const Value & val )
+	void erase( Index idx, const Value & val )
 	{
-		data[ key ].push_back( val );
-	}
-
-	void erase( const Key & key, const Value & val )
-	{
-		Values & values = data[ key ];
-		values.erase( std::remove( values.begin(), values.end(), val ), values.end() );
+		array[ size_t(idx) ].remove( val );
 	}
 };
 
@@ -262,8 +304,8 @@ class Multimap
 //======================================================================================================================
 //  algorithm
 
-using EngineerList = vector< EngineerIdx >;
-using EngineerSet = CountedSet< EngineerIdx >;
+using EngineerList = FixedList< EngineerIdx, numOfEngineers >;
+using EngineerSet = CountedIndexSet< EngineerIdx, EngineerIdx::_EndOfEnum >;
 
 /// Finds all engineers that offer modification of specified grade to a specified module.
 EngineerSet findEngineersOfferingModification( Modification desiredMod )
@@ -296,7 +338,8 @@ struct DesiredMod : public Modification
 	DesiredMod( grade_t g, ModuleType m, bool p ) : Modification( g, m ), pinRequired(p) {}
 };
 
-using EngineerModMultimap = Multimap< EngineerIdx, DesiredMod >;
+static constexpr size_t maxModsPerEngineer = 12;
+using EngineerModMultimap = IndexMultimap< EngineerIdx, EngineerIdx::_EndOfEnum, DesiredMod, maxModsPerEngineer >;
 
 /// data related to one modification requested by the user
 struct DesiredModContext
@@ -541,10 +584,9 @@ EngineerList orderTopologically( const EngineerSet & engineerSet )
 	EngineerList engineerList;
 	for (EngineerIdx engineerIdx : engineerSet)
 		engineerList.push_back( engineerIdx );
-	std::sort( engineerList.begin(), engineerList.end() );
 
-	unordered_map< EngineerIdx, EngineerIdx > predecessors;
-	unordered_map< EngineerIdx, EngineerList > successors;
+	IndexMap< EngineerIdx, EngineerIdx::_EndOfEnum, EngineerIdx > predecessors;
+	IndexMap< EngineerIdx, EngineerIdx::_EndOfEnum, EngineerList > successors;
 	for (EngineerIdx engineerIdx : engineerList)
 	{
 		EngineerIdx predecessor = engineers[ engineerIdx ].requiredEngineer;
