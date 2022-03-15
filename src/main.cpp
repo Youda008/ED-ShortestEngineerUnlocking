@@ -373,24 +373,7 @@ struct AlgorithmContext
 	/// whether at least one valid solution was found
 	/** We need this for verification that the user didn't enter requirements that are impossible to satisfy. */
 	bool foundSolution;
-
-	// all of the following is needed to track progress and display how much is remaining
-	vector< size_t > originalSetSizes;  // we modify the sets during the algorithm, so these are the sizes before it started
-	uint64_t combinationsTotal;  // number of all possible combinations of engineers
-	uint64_t combinationsDone;  // number of all engineer combinations that were either tried or skipped
 };
-
-// needed to track progress and display how much is remaining
-uint64_t getNumOfCombinations( const vector< size_t > & originalSetSizes, size_t recursionLevelsRemaining )
-{
-	uint64_t numOfCombinations = 1;
-	size_t firstSetIdx = originalSetSizes.size() - recursionLevelsRemaining;
-	for (size_t setIdx = firstSetIdx; setIdx < originalSetSizes.size(); ++setIdx)
-	{
-		numOfCombinations *= originalSetSizes[ setIdx ];
-	}
-	return numOfCombinations;
-}
 
 /// This compares to sets of engineers required to be unlocked and decides which one is faster to unlock.
 bool isBetter( const Solution & solution1, const Solution & solution2 )
@@ -451,12 +434,8 @@ void addEngineerToAllSetsOfPinnedMods( EngineerIdx engineerIdx, DesiredModContex
   * Executes one level of dynamic cascade of nested for-loops that generates all combinations of engineers from
   * the given engineer sets, and calculates how many other engineers need to be unlocked to get access
   * to these engineers in these sets. */
-uint64_t tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext * currentModCtx, DesiredModContext * lastModCtx )
+void tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext * currentModCtx, DesiredModContext * lastModCtx )
 {
-	// needed to track progress and display how much is remaining
-	uint64_t combinationsDoneLocally = 0;
-	uint engineersTried = 0;
-
 	// If all engineers offering this modification are already used for pinning the previous modifications,
 	// this loop simply performs no iteration and this combination is not finished and evaluated.
 	for (EngineerIdx engineerIdx : currentModCtx->engineers)
@@ -478,8 +457,7 @@ uint64_t tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext *
 					removeEngineerFromAllSetsOfPinnedMods( engineerIdx, currentModCtx + 1, lastModCtx );
 
 				// continue with generating the rest of the combination
-				combinationsDoneLocally += tryAllEngineerCombinations( ctx, currentModCtx + 1, lastModCtx );
-				engineersTried += 1;  // needed to track progress and display how much is remaining
+				tryAllEngineerCombinations( ctx, currentModCtx + 1, lastModCtx );
 
 				// restore the previous state of the sets of engineers offering a mod that is required to be pinned
 				if (currentModCtx->mod.pinRequired)
@@ -500,52 +478,6 @@ uint64_t tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext *
 		removeEngineerWithAllRequirements( engineerIdx, ctx.currentSolution.requiredEngineers );
 		ctx.currentSolution.relatedModifications.erase( engineerIdx, currentModCtx->mod );
 	}
-
-
-	// needed to track progress and display how much is remaining
-
-	const auto printProgress = []( const AlgorithmContext & ctx )
-	{
-		double progress = double( ctx.combinationsDone ) / double( ctx.combinationsTotal ) * 100;
-		cout << "\rcalculating...  progress: " << std::setw(5) << std::fixed << std::setprecision(1) << progress << '%';
-		cout.flush();                             // good old printf, really
-	};
-
-	size_t recursionLevelsRemaining = lastModCtx - currentModCtx + 1;
-	if (recursionLevelsRemaining < 10)
-	{
-		// No calculation, number of combinations tried will be calculated by the upper level.
-		combinationsDoneLocally = 0;
-	}
-	else if (recursionLevelsRemaining == 10)
-	{
-		// Ignore value accumulated from lower levels, it's 0 anyway.
-		combinationsDoneLocally = getNumOfCombinations( ctx.originalSetSizes, recursionLevelsRemaining );
-		ctx.combinationsDone += combinationsDoneLocally;
-		printProgress( ctx );
-	}
-	else // recursionLevelsRemaining > 10
-	{
-		size_t currentSetIdx = ctx.originalSetSizes.size() - recursionLevelsRemaining;
-		if (engineersTried == ctx.originalSetSizes[ currentSetIdx ])
-		{
-			// All engineers from this set were tried, which means the ctx.combinationsDone incremented by lower levels
-			// and combinationsDoneLocally accumulated from the lower levels is correct and progress was already printed,
-			// so no action required.
-		}
-		else
-		{
-			// Some engineers from the current set were skipped, which means the ctx.combinationsDone and combinationsDoneLocally
-			// were only partially incremented and both are missing the same number from the correct value,
-			// so revert the global count using the local count and re-calculate it properly.
-			ctx.combinationsDone -= combinationsDoneLocally;
-			combinationsDoneLocally = getNumOfCombinations( ctx.originalSetSizes, recursionLevelsRemaining );
-			ctx.combinationsDone += combinationsDoneLocally;
-			// Also update the current progress, since by compensating for the skipped engineers, the number has increased.
-			printProgress( ctx );
-		}
-	}
-	return combinationsDoneLocally;
 }
 
 /// only a wrapper around the recursive function, performing required initialization
@@ -559,13 +491,6 @@ Solution findBestEngineerCombination( vector< DesiredModContext > & desiredModCo
 	// so that it's not evaluated as better than anything else, empty set would always be better than anything else.
 	for (EngineerIdx engineerIdx = firstEngineerIdx; engineerIdx <= lastEngineerIdx; engineerIdx = inc( engineerIdx ))
 		ctx.bestSolution.requiredEngineers.insert( engineerIdx );
-
-	// needed to track progress and display how much is remaining
-	ctx.originalSetSizes.reserve( desiredModContexts.size() );
-	for (const auto & modCtx : desiredModContexts)
-		ctx.originalSetSizes.push_back( modCtx.engineers.size() );
-	ctx.combinationsTotal = getNumOfCombinations( ctx.originalSetSizes, ctx.originalSetSizes.size() );
-	ctx.combinationsDone = 0;
 
 	tryAllEngineerCombinations( ctx, &desiredModContexts.front(), &desiredModContexts.back() );
 
@@ -993,11 +918,7 @@ int main( int argc, char * argv [] )
 		return 3;
 	}
 
-	cout << "calculating..."; cout.flush();
-
 	auto unlockingPath = findShortestEngineerUnlockingPath( desiredMods );
-
-	cout << "\n\n";
 
 	if (unlockingPath.missingMod.valid())
 	{
