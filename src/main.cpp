@@ -701,22 +701,41 @@ vector< DesiredMod > readModifications( istream & in )
 			break;
 		}
 
+		bool pinRequired;
+		grade_t modGrade;
+		string modTypeStr;
+
 		istringstream iss( line );
 
-		bool pinRequired;
-		int c = iss.get();
-		if (c == EOF)
+		char firstChar, gradeChar;
+		if (!(iss >> firstChar))
 		{
-			cerr << "input ended unexpectedly" << endl;
+			cerr << "the line is empty" << endl;
 			continue;
 		}
-		else if (c == '>')
+		else if (firstChar == '>')
 		{
 			pinRequired = true;
+			if (!(iss >> gradeChar))
+			{
+				cerr << "invalid modification format: " << line << " (must be: [>] <grade> <module name>)" << endl;
+				continue;
+			}
 		}
-		else if (isspace(c))
+		else
 		{
 			pinRequired = false;
+			gradeChar = firstChar;
+		}
+
+		if (isdigit( gradeChar ))
+		{
+			modGrade = gradeChar - '0';
+			if (modGrade < 1 || modGrade > 5)
+			{
+				cerr << "invalid modification grade: " << modGrade << " (must be 1 - 5)" << endl;
+				continue;
+			}
 		}
 		else
 		{
@@ -724,20 +743,6 @@ vector< DesiredMod > readModifications( istream & in )
 			continue;
 		}
 
-		grade_t modGrade;
-		if (!(iss >> modGrade))
-		{
-			cerr << "invalid modification format: " << line << " (must be: [>] <grade> <module name>)" << endl;
-			continue;
-		}
-
-		if (modGrade < 1 || modGrade > 5)
-		{
-			cerr << "invalid modification grade: " << modGrade << " (must be 1 - 5)" << endl;
-			continue;
-		}
-
-		string modTypeStr;
 		std::getline( iss >> std::ws, modTypeStr, '\n' );  // read the rest of the string-stream into a string
 
 		ModuleType modType = moduleFromString( modTypeStr );
@@ -907,8 +912,9 @@ int main( int argc, char * argv [] )
 	}
 	else
 	{
-		cout << "Enter the list of modifications:" << endl;
+		cout << "Enter the list of modifications terminated by empty line:" << endl;
 		desiredMods = readModifications( cin );
+		cout << endl;
 	}
 
 	if (desiredMods.empty())
