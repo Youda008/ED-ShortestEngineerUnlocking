@@ -436,19 +436,19 @@ void tryAllEngineerCombinations( AlgorithmContext & ctx, DesiredModContext * cur
 /// only a wrapper around the recursive function, performing required initialization
 Solution findBestEngineerCombination( vector< DesiredModContext > & desiredModContexts )
 {
-	auto ctx = std::make_unique< AlgorithmContext >();
+	AlgorithmContext ctx;
 
-	ctx->foundSolution = false;
+	ctx.foundSolution = false;
 
 	// Initialize the best set to the worst one (with all the engineers)
 	// so that it's not evaluated as better than anything else, empty set would always be better than anything else.
 	for (EngineerIdx engineerIdx = firstEngineerIdx; engineerIdx <= lastEngineerIdx; engineerIdx = inc( engineerIdx ))
-		ctx->bestSolution.requiredEngineers.insert( engineerIdx );
+		ctx.bestSolution.requiredEngineers.insert( engineerIdx );
 
-	tryAllEngineerCombinations( *ctx, &desiredModContexts.front(), &desiredModContexts.back() );
+	tryAllEngineerCombinations( ctx, &desiredModContexts.front(), &desiredModContexts.back() );
 
-	if (ctx->foundSolution)
-		return ctx->bestSolution;
+	if (ctx.foundSolution)
+		return ctx.bestSolution;
 	else
 		return {};  // because empty set can never be a valid result, we can use this to indicate failure
 }
